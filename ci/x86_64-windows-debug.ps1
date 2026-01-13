@@ -8,29 +8,29 @@ $ZIG_LIB_DIR = "$(Get-Location)\lib"
 $ZSF_MAX_RSS = if ($Env:ZSF_MAX_RSS) { $Env:ZSF_MAX_RSS } else { 0 }
 
 if (!(Test-Path "$PREFIX_PATH.zip")) {
-    Write-Output "Downloading $ZIG_LLVM_CLANG_LLD_URL"
-    Invoke-WebRequest -Uri "$ZIG_LLVM_CLANG_LLD_URL" -OutFile "$PREFIX_PATH.zip"
+  Write-Output "Downloading $ZIG_LLVM_CLANG_LLD_URL"
+  Invoke-WebRequest -Uri "$ZIG_LLVM_CLANG_LLD_URL" -OutFile "$PREFIX_PATH.zip"
 
-    Write-Output "Extracting..."
-    Add-Type -AssemblyName System.IO.Compression.FileSystem ;
-    [System.IO.Compression.ZipFile]::ExtractToDirectory("$PREFIX_PATH.zip", "$PREFIX_PATH\..")
+  Write-Output "Extracting..."
+  Add-Type -AssemblyName System.IO.Compression.FileSystem ;
+  [System.IO.Compression.ZipFile]::ExtractToDirectory("$PREFIX_PATH.zip", "$PREFIX_PATH\..")
 }
 
 function CheckLastExitCode {
-    if (!$?) {
-        exit 1
-    }
-    return 0
+  if (!$?) {
+    exit 1
+  }
+  return 0
 }
 
 # Override the cache directories because they won't actually help other CI runs
 # which will be testing alternate versions of zig, and ultimately would just
 # fill up space on the hard drive for no reason.
-$Env:ZIG_GLOBAL_CACHE_DIR="$(Get-Location)\zig-global-cache"
-$Env:ZIG_LOCAL_CACHE_DIR="$(Get-Location)\zig-local-cache"
+$Env:ZIG_GLOBAL_CACHE_DIR = "$(Get-Location)\zig-global-cache"
+$Env:ZIG_LOCAL_CACHE_DIR = "$(Get-Location)\zig-local-cache"
 
 Write-Output "Building from source..."
-New-Item -Path 'build-debug' -ItemType Directory
+New-Item -Path 'build-debug' -ItemType Directory -Force
 Set-Location -Path 'build-debug'
 
 # CMake gives a syntax error when file paths with backward slashes are used.

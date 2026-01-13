@@ -51,6 +51,8 @@ const WORD = windows.WORD;
 const MEM = windows.MEM;
 const PAGE = windows.PAGE;
 
+const GetCurrentProcess = windows.GetCurrentProcess;
+
 // I/O - Filesystem
 
 pub extern "kernel32" fn ReadDirectoryChangesW(
@@ -482,46 +484,46 @@ pub extern "kernel32" fn SetLastError(
 
 // Everything Else
 
-// pub extern "kernel32" fn VirtualFreeEx(hProcess: HANDLE, lpAddress: LPVOID, dwSize: SIZE_T, dwFreeType: DWORD) callconv(.winapi) BOOL;
+pub extern "kernel32" fn VirtualFreeEx(hProcess: HANDLE, lpAddress: LPVOID, dwSize: SIZE_T, dwFreeType: DWORD) callconv(.winapi) BOOL;
 
-// pub extern "kernel32" fn VirtualQueryEx(hProcess: HANDLE, lpAddress: ?LPCVOID, lpBuffer: PMEMORY_BASIC_INFORMATION, dwLength: SIZE_T) callconv(.winapi) SIZE_T;
+pub extern "kernel32" fn VirtualQueryEx(hProcess: HANDLE, lpAddress: ?LPCVOID, lpBuffer: PMEMORY_BASIC_INFORMATION, dwLength: SIZE_T) callconv(.winapi) SIZE_T;
 
-// pub extern "kernel32" fn VirtualProtectEx(
-//     hProcess: HANDLE,
-//     lpAddress: LPVOID,
-//     dwSize: SIZE_T,
-//     flNewProtect: DWORD,
-//     lpflOldProtect: *DWORD,
-// ) callconv(.winapi) BOOL;
+pub extern "kernel32" fn VirtualProtectEx(
+    hProcess: HANDLE,
+    lpAddress: LPVOID,
+    dwSize: SIZE_T,
+    flNewProtect: DWORD,
+    lpflOldProtect: *DWORD,
+) callconv(.winapi) BOOL;
 
-// pub extern "kernel32" fn OpenProcess(
-//     dwDesiredAccess: DWORD,
-//     bInheritHandle: BOOL,
-//     dwProcessId: DWORD,
-// ) callconv(.winapi) ?HANDLE;
+pub extern "kernel32" fn OpenProcess(
+    dwDesiredAccess: DWORD,
+    bInheritHandle: BOOL,
+    dwProcessId: DWORD,
+) callconv(.winapi) ?HANDLE;
 
-// pub extern "kernel32" fn CreateRemoteThread(
-//     hProcess: HANDLE,
-//     lpThreadAttributes: ?*SECURITY_ATTRIBUTES,
-//     dwStackSize: SIZE_T,
-//     lpStartAddress: LPTHREAD_START_ROUTINE,
-//     lpParameter: LPVOID,
-//     dwCreationFlags: DWORD,
-//     lpThreadId: ?*DWORD,
-// ) callconv(.winapi) ?HANDLE;
+pub extern "kernel32" fn CreateRemoteThread(
+    hProcess: HANDLE,
+    lpThreadAttributes: ?*SECURITY_ATTRIBUTES,
+    dwStackSize: SIZE_T,
+    lpStartAddress: LPTHREAD_START_ROUTINE,
+    lpParameter: LPVOID,
+    dwCreationFlags: DWORD,
+    lpThreadId: ?*DWORD,
+) callconv(.winapi) ?HANDLE;
 
-// pub extern "kernel32" fn GetThreadContext(
-//     hThread: HANDLE,
-//     lpContext: *CONTEXT,
-// ) callconv(.winapi) BOOL;
+pub extern "kernel32" fn GetThreadContext(
+    hThread: HANDLE,
+    lpContext: *CONTEXT,
+) callconv(.winapi) BOOL;
 
-// pub extern "kernel32" fn SetThreadContext(hThread: HANDLE, lpContext: *const CONTEXT) callconv(.winapi) BOOL;
+pub extern "kernel32" fn SetThreadContext(hThread: HANDLE, lpContext: *const CONTEXT) callconv(.winapi) BOOL;
 
-// pub extern "kernel32" fn ResumeThread(hThread: HANDLE) callconv(.winapi) DWORD;
+pub extern "kernel32" fn ResumeThread(hThread: HANDLE) callconv(.winapi) DWORD;
 
-// pub extern "kernel32" fn SuspendThread(hThread: HANDLE) callconv(.winapi) DWORD;
+pub extern "kernel32" fn SuspendThread(hThread: HANDLE) callconv(.winapi) DWORD;
 
-// pub extern "kernel32" fn GetExitCodeThread(hThread: HANDLE, lpExitCode: *DWORD) callconv(.winapi) BOOL;
+pub extern "kernel32" fn GetExitCodeThread(hThread: HANDLE, lpExitCode: *DWORD) callconv(.winapi) BOOL;
 
 const unexpectedStatus = windows.unexpectedStatus;
 
@@ -539,14 +541,15 @@ pub fn VirtualAllocEx(
     AllocationType: MEM.ALLOCATE,
     Protect: PAGE,
 ) !LPVOID {
-    const base_addr: ?LPVOID = BaseAddress;
-    const region_size: SIZE_T = RegionSize;
-    const alloc_type = AllocationType & 0xFFFFFFC0;
+    var base_addr: ?LPVOID = BaseAddress;
+    var region_size: SIZE_T = RegionSize;
+    const alloc_type = AllocationType;
 
-    var basic_info = SYSTEM_BASIC_INFORMATION{};
+    var basic_info = std.mem.zeroes(SYSTEM_BASIC_INFORMATION);
     const rc = ntdll.NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS.SystemBasicInformation, &basic_info, @sizeOf(SYSTEM_BASIC_INFORMATION), null);
     switch (rc) {
         .SUCCESS => {},
+
         .ACCESS_DENIED => return error.AccessDenied,
         .INVALID_HANDLE => return error.InvalidHandle,
         .INVALID_PARAMETER => return error.InvalidParameter,
@@ -572,15 +575,13 @@ pub fn VirtualAllocEx(
         Protect,
     );
 
-    if (status < 0) {
+    if (@intFromEnum(status) < 0) {
         ntdll.RtlNtStatusToDosError(status);
         return error.Unexpected;
     }
 
     return base_addr orelse error.Unexpected;
 }
-
-const GetCurrentProcess = windows.GetCurrentProcess;
 
 pub fn VirtualAlloc(
     BaseAddress: ?LPVOID,

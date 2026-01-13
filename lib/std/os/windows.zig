@@ -4939,8 +4939,8 @@ pub const GetSystemInfoError = error{
 };
 
 pub fn GetSystemInfo(lpSystemInfo: *SYSTEM_INFO) GetSystemInfoError!void {
-    var basic_info = SYSTEM_BASIC_INFORMATION{};
-    var proc_info = SYSTEM_PROCESSOR_INFORMATION{};
+    var basic_info = std.mem.zeroes(SYSTEM_BASIC_INFORMATION);
+    var proc_info = std.mem.zeroes(SYSTEM_PROCESSOR_INFORMATION);
 
     var rc = ntdll.NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS.SystemBasicInformation, &basic_info, @sizeOf(SYSTEM_BASIC_INFORMATION), null);
     switch (rc) {
@@ -4966,8 +4966,8 @@ pub fn GetSystemInfo(lpSystemInfo: *SYSTEM_INFO) GetSystemInfoError!void {
             .wProcessorArchitecture = proc_info.ProcessorArchitecture,
             .wReserved = 0,
         } },
-        .lpMinimumApplicationAddress = basic_info.MinimumUserModeAddress,
-        .lpMaximumApplicationAddress = basic_info.MaximumUserModeAddress,
+        .lpMinimumApplicationAddress = @ptrFromInt(basic_info.MinimumUserModeAddress),
+        .lpMaximumApplicationAddress = @ptrFromInt(basic_info.MaximumUserModeAddress),
         .dwActiveProcessorMask = basic_info.ActiveProcessorsAffinityMask,
         .dwNumberOfProcessors = basic_info.NumberOfProcessors, // ! Fix
         .dwProcessorType = 0, // ! Extend
