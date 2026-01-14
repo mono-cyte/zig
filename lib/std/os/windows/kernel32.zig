@@ -52,6 +52,7 @@ const MEM = windows.MEM;
 const PAGE = windows.PAGE;
 
 const GetCurrentProcess = windows.GetCurrentProcess;
+const unexpectedStatus = windows.unexpectedStatus;
 
 // I/O - Filesystem
 
@@ -484,8 +485,6 @@ pub extern "kernel32" fn SetLastError(
 
 // Everything Else
 
-pub extern "kernel32" fn VirtualFreeEx(hProcess: HANDLE, lpAddress: LPVOID, dwSize: SIZE_T, dwFreeType: DWORD) callconv(.winapi) BOOL;
-
 pub extern "kernel32" fn VirtualQueryEx(hProcess: HANDLE, lpAddress: ?LPCVOID, lpBuffer: PMEMORY_BASIC_INFORMATION, dwLength: SIZE_T) callconv(.winapi) SIZE_T;
 
 pub extern "kernel32" fn VirtualProtectEx(
@@ -525,7 +524,7 @@ pub extern "kernel32" fn SuspendThread(hThread: HANDLE) callconv(.winapi) DWORD;
 
 pub extern "kernel32" fn GetExitCodeThread(hThread: HANDLE, lpExitCode: *DWORD) callconv(.winapi) BOOL;
 
-const unexpectedStatus = windows.unexpectedStatus;
+// Memory Management
 
 pub const VirtualAllocExError = error{
     AccessDenied,
@@ -540,31 +539,10 @@ pub fn VirtualAllocEx(
     RegionSize: SIZE_T,
     AllocationType: MEM.ALLOCATE,
     Protect: PAGE,
-) !LPVOID {
+) VirtualAllocExError!LPVOID {
     var base_addr: ?LPVOID = BaseAddress;
     var region_size: SIZE_T = RegionSize;
     const alloc_type = AllocationType;
-
-    var basic_info = std.mem.zeroes(SYSTEM_BASIC_INFORMATION);
-    const rc = ntdll.NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS.SystemBasicInformation, &basic_info, @sizeOf(SYSTEM_BASIC_INFORMATION), null);
-    switch (rc) {
-        .SUCCESS => {},
-
-        .ACCESS_DENIED => return error.AccessDenied,
-        .INVALID_HANDLE => return error.InvalidHandle,
-        .INVALID_PARAMETER => return error.InvalidParameter,
-        else => return unexpectedStatus(rc),
-    }
-
-    if (base_addr) |addr| {
-        const param_addr = @intFromPtr(addr);
-        const min_addr = basic_info.MinimumUserModeAddress;
-        const max_addr = basic_info.MaximumUserModeAddress;
-
-        if (param_addr < min_addr or param_addr > max_addr) {
-            return error.InvalidParameter;
-        }
-    }
 
     const status = ntdll.NtAllocateVirtualMemory(
         ProcessHandle,
@@ -576,19 +554,25 @@ pub fn VirtualAllocEx(
     );
 
     if (@intFromEnum(status) < 0) {
-        ntdll.RtlNtStatusToDosError(status);
-        return error.Unexpected;
+        switch (status) {
+            .ACCESS_DENIED => return error.AccessDenied,
+            .INVALID_HANDLE => return error.InvalidHandle,
+            .INVALID_PARAMETER => return error.InvalidParameter,
+            else => return unexpectedStatus(status),
+        }
     }
 
     return base_addr orelse error.Unexpected;
 }
+
+const VirtualAllocError = VirtualAllocExError;
 
 pub fn VirtualAlloc(
     BaseAddress: ?LPVOID,
     RegionSize: SIZE_T,
     AllocationType: MEM.ALLOCATE,
     Protect: PAGE,
-) !LPVOID {
+) VirtualAllocError!LPVOID {
     return try VirtualAllocEx(
         GetCurrentProcess(),
         BaseAddress,
@@ -596,4 +580,53 @@ pub fn VirtualAlloc(
         AllocationType,
         Protect,
     );
+}
+
+const VirtualFreeExError = error{
+    AccessDenied,
+    InvalidHandle,
+    InvalidParameter,
+    Unexpected,
+};
+
+pub fn VirtualFreeEx(ProcessHandle: HANDLE, lpAddress: LPVOID, Size: SIZE_T, FreeType: MEM.FREE) VirtualFreeExError!void {
+    if (FreeType == .RELEASE and Size != 0) {
+        return error.InvalidParameter;
+    }
+
+    const status = ntdll.NtFreeVirtualMemory(
+        ProcessHandle,
+        @ptrCast(&lpAddress),
+        &Size,
+        FreeType,
+    );
+
+    if (status == .INVALID_PAGE_PROTECTION) {
+        if (ProcessHandle == GetCurrentProcess()) {
+            if (ntdll.RtlFlushSecureMemoryCache(lpAddress, Size) == 0) {
+                return error.Unexpected;
+            }
+            status = ntdll.NtFreeVirtualMemory(
+                ProcessHandle,
+                @ptrCast(&lpAddress),
+                &Size,
+                FreeType,
+            );
+        }
+    }
+
+    if (@intFromEnum(status) < 0) {
+        switch (status) {
+            .ACCESS_DENIED => return error.AccessDenied,
+            .INVALID_HANDLE => return error.InvalidHandle,
+            .INVALID_PARAMETER => return error.InvalidParameter,
+            else => return unexpectedStatus(status),
+        }
+    }
+}
+
+const VirtualFreeError = VirtualFreeExError;
+
+pub fn VirtualFree(lpAddress: LPVOID, Size: SIZE_T, FreeType: MEM.FREE) VirtualFreeError!void {
+    return try VirtualFreeEx(GetCurrentProcess(), lpAddress, Size, FreeType);
 }

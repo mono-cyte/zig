@@ -595,3 +595,5 @@ pub extern "ntdll" fn RtlNtStatusToDosError(
 ) callconv(.winapi) ULONG;
 
 pub extern "ntdll" fn RtlSetLastWin32Error(err: DWORD) callconv(.winapi) void;
+
+pub extern "ntdll" fn RtlFlushSecureMemoryCache(MemoryCache: PVOID, MemoryLength: SIZE_T) callconv(.winapi) BOOLEAN;

@@ -4939,8 +4939,8 @@ pub const GetSystemInfoError = error{
 };
 
 pub fn GetSystemInfo(lpSystemInfo: *SYSTEM_INFO) GetSystemInfoError!void {
-    var basic_info = std.mem.zeroes(SYSTEM_BASIC_INFORMATION);
-    var proc_info = std.mem.zeroes(SYSTEM_PROCESSOR_INFORMATION);
+    var basic_info: SYSTEM_BASIC_INFORMATION = undefined;
+    var proc_info: SYSTEM_PROCESSOR_INFORMATION = undefined;
 
     var rc = ntdll.NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS.SystemBasicInformation, &basic_info, @sizeOf(SYSTEM_BASIC_INFORMATION), null);
     switch (rc) {
