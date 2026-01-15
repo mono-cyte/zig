@@ -51,6 +51,8 @@ const USHORT = windows.USHORT;
 const VECTORED_EXCEPTION_HANDLER = windows.VECTORED_EXCEPTION_HANDLER;
 const WORD = windows.WORD;
 
+pub const Win32Error = @import("win32error.zig").Win32Error;
+
 // ref: km/ntifs.h
 
 pub extern "ntdll" fn RtlCreateHeap(
@@ -594,6 +596,6 @@ pub extern "ntdll" fn RtlNtStatusToDosError(
     Status: NTSTATUS,
 ) callconv(.winapi) ULONG;
 
-pub extern "ntdll" fn RtlSetLastWin32Error(err: DWORD) callconv(.winapi) void;
+pub extern "ntdll" fn RtlSetLastWin32Error(err: Win32Error) callconv(.winapi) void;
 
 pub extern "ntdll" fn RtlFlushSecureMemoryCache(MemoryCache: PVOID, MemoryLength: SIZE_T) callconv(.winapi) BOOLEAN;

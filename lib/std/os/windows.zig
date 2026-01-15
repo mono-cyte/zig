@@ -6868,3 +6868,96 @@ pub fn wtf8ToWtf16Le(wtf16le: []u16, wtf8: []const u8) error{ BadPathName, NameT
         error.InvalidWtf8 => return error.BadPathName,
     };
 }
+
+pub const PROC_THREAD_ATTRIBUTE = enum(usize) {
+    pub const Bits = packed struct(u32) {
+        number: u16,
+        thread: bool,
+        input: bool,
+        additive: bool,
+        _reserved: u13,
+    };
+
+    pub const Id = enum(u32) {
+        ParentProcess = 0,
+        HandleList = 2,
+        GroupAffinity = 3,
+        PreferredNode = 4,
+        IdealProcessor = 5,
+        UmsThread = 6,
+        MitigationPolicy = 7,
+        SecurityCapabilities = 9,
+        ProtectionLevel = 11,
+        JobList = 13,
+        ChildProcessPolicy = 14,
+        AllApplicationPackagesPolicy = 15,
+        Win32kFilter = 16,
+        SafeOpenPromptOriginClaim = 17,
+        DesktopAppPolicy = 18,
+        PseudoConsole = 22,
+        MitigationAuditPolicy = 24,
+        MachineType = 25,
+        ComponentFilter = 26,
+        EnableOptionalXStateFeatures = 27,
+        TrustedApp = 29,
+        SveVectorLength = 30,
+    };
+
+    fn ProcThreadAttributeValue(id: Id, thread: bool, input: bool, additive: bool) usize {
+        const bits: u32 = @bitCast(Bits{
+            .number = @intFromEnum(id),
+            .thread = thread,
+            .input = input,
+            .additive = additive,
+            ._reserved = 0,
+        });
+
+        return @intCast(bits);
+    }
+
+    // Windows 7 and later
+    PARENT_PROCESS = ProcThreadAttributeValue(.ParentProcess, false, true, false),
+    HANDLE_LIST = ProcThreadAttributeValue(.HandleList, false, true, false),
+    GROUP_AFFINITY = ProcThreadAttributeValue(.GroupAffinity, true, true, false),
+    PREFERRED_NODE = ProcThreadAttributeValue(.PreferredNode, false, true, false),
+    IDEAL_PROCESSOR = ProcThreadAttributeValue(.IdealProcessor, true, true, false),
+    UMS_THREAD = ProcThreadAttributeValue(.UmsThread, true, true, false),
+    MITIGATION_POLICY = ProcThreadAttributeValue(.MitigationPolicy, false, true, false),
+    // Windows 8 and later
+    SECURITY_CAPABILITIES = ProcThreadAttributeValue(.SecurityCapabilities, false, true, false),
+    PROTECTION_LEVEL = ProcThreadAttributeValue(.ProtectionLevel, false, true, false),
+    // Windows 10 and later
+    PSEUDOCONSOLE = ProcThreadAttributeValue(.PseudoConsole, false, true, false), // 1809(RS5) and later
+    MACHINE_TYPE = ProcThreadAttributeValue(.MachineType, false, true, false), // 20H1(MN) and later
+    ENABLE_OPTIONAL_XSTATE_FEATURES = ProcThreadAttributeValue(.EnableOptionalXStateFeatures, true, true, false), // 21H1(FE) and later
+    // Windows 11 and later
+    SVE_VECTOR_LENGTH = ProcThreadAttributeValue(.SveVectorLength, false, true, false), // 24H2(GE) and later
+
+    pub fn asBits(self: PROC_THREAD_ATTRIBUTE) Bits {
+        return @bitCast(@as(u32, @truncate(@intFromEnum(self))));
+    }
+};
+
+pub const PROC_THREAD_ATTRIBUTE_LIST = extern struct {
+    Flags: u32,
+    Size: u32,
+    Count: u32,
+    Reserved: u32,
+    Unknown: ?*u32, // pointer to 0x00060001
+    Entries: [0]Entry,
+
+    pub const Entry = extern struct {
+        Attribute: PROC_THREAD_ATTRIBUTE,
+        Size: SIZE_T,
+        lpValue: LPVOID,
+    };
+
+    pub fn getEntry(self: @This(), i: u32) ?*Entry {
+        if (i >= self.Count) {
+            return null;
+        } else {
+            const entries: [*]Entry = @ptrCast(&self.Entries);
+            return &entries[i];
+        }
+    }
+};

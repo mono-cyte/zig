@@ -25,15 +25,19 @@ const LPCWSTR = windows.LPCWSTR;
 const LPTHREAD_START_ROUTINE = windows.LPTHREAD_START_ROUTINE;
 const LPVOID = windows.LPVOID;
 const LPWSTR = windows.LPWSTR;
+const MEM = windows.MEM;
 const MODULEENTRY32 = windows.MODULEENTRY32;
 const OVERLAPPED = windows.OVERLAPPED;
 const OVERLAPPED_ENTRY = windows.OVERLAPPED_ENTRY;
+const PAGE = windows.PAGE;
 const PMEMORY_BASIC_INFORMATION = windows.PMEMORY_BASIC_INFORMATION;
 const PROCESS_INFORMATION = windows.PROCESS_INFORMATION;
+const PROC_THREAD_ATTRIBUTE = windows.PROC_THREAD_ATTRIBUTE;
+const PROC_THREAD_ATTRIBUTE_LIST = windows.PROC_THREAD_ATTRIBUTE_LIST;
+const SIZE_T = windows.SIZE_T;
 const SYSTEM_BASIC_INFORMATION = windows.SYSTEM_BASIC_INFORMATION;
 const SYSTEM_PROCESSOR_INFORMATION = windows.SYSTEM_PROCESSOR_INFORMATION;
 const SECURITY_ATTRIBUTES = windows.SECURITY_ATTRIBUTES;
-const SIZE_T = windows.SIZE_T;
 const SRWLOCK = windows.SRWLOCK;
 const STARTUPINFOW = windows.STARTUPINFOW;
 const SYSTEM_INFO = windows.SYSTEM_INFO;
@@ -47,12 +51,6 @@ const WCHAR = windows.WCHAR;
 const WIN32_FIND_DATAW = windows.WIN32_FIND_DATAW;
 const Win32Error = windows.Win32Error;
 const WORD = windows.WORD;
-
-const MEM = windows.MEM;
-const PAGE = windows.PAGE;
-
-const GetCurrentProcess = windows.GetCurrentProcess;
-const unexpectedStatus = windows.unexpectedStatus;
 
 // I/O - Filesystem
 
@@ -271,6 +269,8 @@ pub extern "kernel32" fn WaitForMultipleObjectsEx(
 
 // Process Management
 
+pub const GetCurrentProcess = windows.GetCurrentProcess;
+
 pub extern "kernel32" fn CreateProcessW(
     lpApplicationName: ?LPCWSTR,
     lpCommandLine: ?LPWSTR,
@@ -312,6 +312,18 @@ pub extern "kernel32" fn CreateToolhelp32Snapshot(
 // TODO: Already a wrapper for this, see `windows.GetCurrentThreadId`.
 pub extern "kernel32" fn GetCurrentThreadId() callconv(.winapi) DWORD;
 
+pub extern "kernel32" fn CreateRemoteThreadEx(hProcess: HANDLE, lpThreadAttributes: ?*SECURITY_ATTRIBUTES, dwStackSize: SIZE_T, lpStartAddress: LPTHREAD_START_ROUTINE, lpParameter: ?LPVOID, dwCreationFlags: DWORD, lpAttributeList: ?*PROC_THREAD_ATTRIBUTE_LIST, lpThreadId: ?*DWORD) callconv(.winapi) ?HANDLE;
+
+pub extern "kernel32" fn CreateRemoteThread(
+    hProcess: HANDLE,
+    lpThreadAttributes: ?*SECURITY_ATTRIBUTES,
+    dwStackSize: SIZE_T,
+    lpStartAddress: LPTHREAD_START_ROUTINE,
+    lpParameter: LPVOID,
+    dwCreationFlags: DWORD,
+    lpThreadId: ?*DWORD,
+) callconv(.winapi) ?HANDLE;
+
 // TODO: CreateRemoteThread with hProcess=NtCurrentProcess().
 pub extern "kernel32" fn CreateThread(
     lpThreadAttributes: ?*SECURITY_ATTRIBUTES,
@@ -341,6 +353,19 @@ pub extern "kernel32" fn SleepConditionVariableSRW(
     dwMilliseconds: DWORD,
     Flags: ULONG,
 ) callconv(.winapi) BOOL;
+
+pub extern "kernel32" fn GetThreadContext(
+    hThread: HANDLE,
+    lpContext: *CONTEXT,
+) callconv(.winapi) BOOL;
+
+pub extern "kernel32" fn SetThreadContext(hThread: HANDLE, lpContext: *const CONTEXT) callconv(.winapi) BOOL;
+
+pub extern "kernel32" fn ResumeThread(hThread: HANDLE) callconv(.winapi) DWORD;
+
+pub extern "kernel32" fn SuspendThread(hThread: HANDLE) callconv(.winapi) DWORD;
+
+pub extern "kernel32" fn GetExitCodeThread(hThread: HANDLE, lpExitCode: *DWORD) callconv(.winapi) BOOL;
 
 // Console management
 
@@ -501,29 +526,6 @@ pub extern "kernel32" fn OpenProcess(
     dwProcessId: DWORD,
 ) callconv(.winapi) ?HANDLE;
 
-pub extern "kernel32" fn CreateRemoteThread(
-    hProcess: HANDLE,
-    lpThreadAttributes: ?*SECURITY_ATTRIBUTES,
-    dwStackSize: SIZE_T,
-    lpStartAddress: LPTHREAD_START_ROUTINE,
-    lpParameter: LPVOID,
-    dwCreationFlags: DWORD,
-    lpThreadId: ?*DWORD,
-) callconv(.winapi) ?HANDLE;
-
-pub extern "kernel32" fn GetThreadContext(
-    hThread: HANDLE,
-    lpContext: *CONTEXT,
-) callconv(.winapi) BOOL;
-
-pub extern "kernel32" fn SetThreadContext(hThread: HANDLE, lpContext: *const CONTEXT) callconv(.winapi) BOOL;
-
-pub extern "kernel32" fn ResumeThread(hThread: HANDLE) callconv(.winapi) DWORD;
-
-pub extern "kernel32" fn SuspendThread(hThread: HANDLE) callconv(.winapi) DWORD;
-
-pub extern "kernel32" fn GetExitCodeThread(hThread: HANDLE, lpExitCode: *DWORD) callconv(.winapi) BOOL;
-
 // Memory Management
 
 pub const VirtualAllocExError = error{
@@ -590,14 +592,17 @@ const VirtualFreeExError = error{
 };
 
 pub fn VirtualFreeEx(ProcessHandle: HANDLE, lpAddress: LPVOID, Size: SIZE_T, FreeType: MEM.FREE) VirtualFreeExError!void {
-    if (FreeType == .RELEASE and Size != 0) {
+    if (FreeType.RELEASE and Size != 0) {
         return error.InvalidParameter;
     }
 
-    const status = ntdll.NtFreeVirtualMemory(
+    var addr = lpAddress;
+    var size = Size;
+
+    var status = ntdll.NtFreeVirtualMemory(
         ProcessHandle,
-        @ptrCast(&lpAddress),
-        &Size,
+        &addr,
+        &size,
         FreeType,
     );
 
@@ -608,8 +613,8 @@ pub fn VirtualFreeEx(ProcessHandle: HANDLE, lpAddress: LPVOID, Size: SIZE_T, Fre
             }
             status = ntdll.NtFreeVirtualMemory(
                 ProcessHandle,
-                @ptrCast(&lpAddress),
-                &Size,
+                &addr,
+                &size,
                 FreeType,
             );
         }
@@ -629,4 +634,99 @@ const VirtualFreeError = VirtualFreeExError;
 
 pub fn VirtualFree(lpAddress: LPVOID, Size: SIZE_T, FreeType: MEM.FREE) VirtualFreeError!void {
     return try VirtualFreeEx(GetCurrentProcess(), lpAddress, Size, FreeType);
+}
+
+pub const unexpectedStatus = windows.unexpectedStatus;
+
+pub const InitializeProcThreadAttributeListError = error{
+    InvalidFlags,
+    TooManyAttributes,
+    InsufficientBuffer,
+};
+
+// TODO: PROC_THREAD_ATTRIBUTE_LIST is undocumented
+pub fn InitializeProcThreadAttributeList(
+    lpAttributeList: ?*PROC_THREAD_ATTRIBUTE_LIST,
+    AttributeCount: u32,
+    Flags: u32,
+    lpSize: *usize,
+) InitializeProcThreadAttributeListError!void {
+    if (Flags != 0) return error.InvalidFlags; //INVALID_PARAMETER_3
+    if (AttributeCount > 31) return error.TooManyAttributes; //INVALID_PARAMETER_2
+
+    const param_size = lpSize.*;
+    const entry_size = @sizeOf(PROC_THREAD_ATTRIBUTE_LIST.Entry);
+    const header_size = @sizeOf(PROC_THREAD_ATTRIBUTE_LIST);
+
+    const required_size = header_size + @as(usize, AttributeCount) * entry_size;
+
+    lpSize.* = required_size;
+
+    if (lpAttributeList) |list| {
+        if (param_size < required_size) return error.InsufficientBuffer;
+        list.* = .{
+            .Flags = 0,
+            .Size = AttributeCount,
+            .Count = 0,
+            .Reserved = 0,
+            .Unknown = null,
+            .Entries = .{},
+        };
+    }
+}
+
+const UpdateProcThreadAttributeError = error{
+    InvalidParameter,
+    InsufficientCapacity,
+    AttributeAlreadySet,
+    Unexpected,
+};
+
+pub fn UpdateProcThreadAttribute(
+    lpAttributeList: *PROC_THREAD_ATTRIBUTE_LIST,
+    Flags: DWORD,
+    Attribute: PROC_THREAD_ATTRIBUTE,
+    lpValue: LPVOID,
+    Size: SIZE_T,
+    lpPreviousValue: ?LPVOID,
+    lpReturnSize: ?*SIZE_T,
+) UpdateProcThreadAttributeError!void {
+    // Reserved parameters must be zero / null
+    if ((Flags & 0xFFFFFFFE) != 0) return error.InvalidParameter;
+    if (lpReturnSize != null) return error.InvalidParameter;
+
+    if (lpAttributeList.Count >= lpAttributeList.Size) {
+        return error.InsufficientCapacity;
+    }
+
+    const bits = Attribute.asBits();
+
+    const flag = @as(u32, 1) << @as(u5, @intCast(bits.id & 0x1F));
+
+    if ((lpAttributeList.Flags & flag) != 0) {
+        return error.AttributeAlreadySet; // NTSTATUS: OBJECT_NAME_EXISTS
+    }
+
+    if (bits.additive and lpPreviousValue != null) {
+        return error.InvalidParameter;
+    }
+
+    switch (bits.id) {
+        .ParentProcess => if (Size != @sizeOf(HANDLE)) return error.InvalidParameter,
+        .HandleList => {
+            if (Size == 0 or (Size % @sizeOf(HANDLE) != 0)) return error.InvalidParameter;
+        },
+        else => {
+            if (Size == 0) return error.InvalidParameter;
+        },
+    }
+
+    const entry = lpAttributeList.getEntry(lpAttributeList.Count);
+
+    entry.lpValue = lpValue;
+    entry.Attribute = Attribute;
+    entry.Size = Size;
+
+    lpAttributeList.Count += 1;
+    lpAttributeList.Flags |= flag;
 }
