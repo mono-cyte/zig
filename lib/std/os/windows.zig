@@ -6878,7 +6878,7 @@ pub const PROC_THREAD_ATTRIBUTE = enum(usize) {
         _reserved: u13,
     };
 
-    pub const Id = enum(u32) {
+    pub const Id = enum(u16) {
         ParentProcess = 0,
         HandleList = 2,
         GroupAffinity = 3,
@@ -6933,8 +6933,14 @@ pub const PROC_THREAD_ATTRIBUTE = enum(usize) {
     // Windows 11 and later
     SVE_VECTOR_LENGTH = ProcThreadAttributeValue(.SveVectorLength, false, true, false), // 24H2(GE) and later
 
-    pub fn asBits(self: PROC_THREAD_ATTRIBUTE) Bits {
+    const Self = @This();
+    pub fn asBits(self: Self) Bits {
         return @bitCast(@as(u32, @truncate(@intFromEnum(self))));
+    }
+
+    pub fn getId(self: Self) Id {
+        const id = self.asBits().number;
+        return @enumFromInt(id);
     }
 };
 
@@ -6945,6 +6951,8 @@ pub const PROC_THREAD_ATTRIBUTE_LIST = extern struct {
     Reserved: u32,
     Unknown: ?*u32, // pointer to 0x00060001
     Entries: [0]Entry,
+
+    const List = @This();
 
     pub const Entry = extern struct {
         Attribute: PROC_THREAD_ATTRIBUTE,
@@ -6960,4 +6968,89 @@ pub const PROC_THREAD_ATTRIBUTE_LIST = extern struct {
             return &entries[i];
         }
     }
+
+    pub const InitError = error{
+        InvalidFlags,
+        TooManyAttributes,
+        InsufficientBuffer,
+    };
+
+    pub fn cb(attr_cnt: u32) u32 {
+        const list_size = @sizeOf(List);
+        const entry_size = @sizeOf(Entry);
+        return list_size + attr_cnt * entry_size;
+    }
+
+    pub fn buffer(attr_cnt: u32, flags: u32) type {
+        return extern struct {
+            list: List,
+            entries: [attr_cnt]Entry,
+            pub fn init() InitError!@This() {
+                if (flags != 0) return error.InvalidFlags; //INVALID_PARAMETER_3
+                if (attr_cnt > 31) return error.TooManyAttributes; //INVALID_PARAMETER_2
+                return .{ .list = .{
+                    .Flags = 0,
+                    .Size = attr_cnt,
+                    .Count = 0,
+                    .Reserved = 0,
+                    .Unknown = null,
+                    .Entries = .{},
+                }, .entries = undefined };
+            }
+        };
+    }
+
+    const UpdateError = error{
+        InvalidParameter,
+        InsufficientCapacity,
+        AttributeAlreadySet,
+        Unexpected,
+    };
+
+    pub fn update(
+        list: *List,
+        Flags: DWORD,
+        attr: PROC_THREAD_ATTRIBUTE,
+        lpValue: LPVOID,
+        size: SIZE_T,
+        lpPreviousValue: ?LPVOID,
+        lpReturnSize: ?*SIZE_T,
+    ) UpdateError!void {
+        // Reserved parameters must be zero / null
+        if ((Flags & 0xFFFFFFFE) != 0) return error.InvalidParameter;
+        if (lpReturnSize != null) return error.InvalidParameter;
+
+        if (list.Count >= list.Size) return error.InsufficientCapacity;
+
+        const bits = attr.asBits();
+        if (bits.additive and lpPreviousValue != null) return error.InvalidParameter;
+
+        const id = attr.getId();
+        const flag = @as(u32, 1) << @as(u5, @intCast(@intFromEnum(id) & 0x1F));
+        if ((list.Flags & flag) != 0) return error.AttributeAlreadySet; // NTSTATUS: OBJECT_NAME_EXISTS
+
+        switch (id) {
+            .ParentProcess => if (size != @sizeOf(HANDLE)) return error.InvalidParameter,
+            .HandleList => {
+                if (size == 0 or (size % @sizeOf(HANDLE) != 0)) return error.InvalidParameter;
+            },
+            else => {
+                if (size == 0) return error.InvalidParameter;
+            },
+        }
+
+        const entry = list.getEntry(list.Count);
+
+        entry.lpValue = lpValue;
+        entry.Attribute = attr;
+        entry.Size = size;
+
+        list.Count += 1;
+        list.Flags |= flag;
+    }
+};
+
+const STARTUPINFOEXW = extern struct {
+    StartupInfo: STARTUPINFOW,
+    lpAttributeList: *PROC_THREAD_ATTRIBUTE_LIST,
 };

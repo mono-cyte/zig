@@ -592,9 +592,51 @@ pub extern "ntdll" fn NtCancelSynchronousIoFile(
     IoStatusBlock: *IO_STATUS_BLOCK,
 ) callconv(.winapi) NTSTATUS;
 
+const PS_ATTRIBUTE = extern struct {
+    Attribute: ULONG_PTR,
+    Size: SIZE_T,
+    Data: extern union {
+        value: ULONG_PTR,
+        ptr: PVOID,
+    },
+    ReturnLength: SIZE_T,
+};
+
+const PS_ATTRIBUTE_LIST = extern struct {
+    TotalLength: SIZE_T,
+    Attributes: [0]PS_ATTRIBUTE,
+};
+
+pub const USER_THREAD_START_ROUTINE = fn (lpThreadParameter: ?PVOID) callconv(.winapi) NTSTATUS;
+
+pub const THREAD_CREATE_FLAGS = packed struct(u32) {
+    CREATE_SUSPENDED: bool = false,
+    SKIP_THREAD_ATTACH: bool = false, // Ex only
+    HIDE_FROM_DEBUGGER: bool = false, // Ex only
+    _reserved1: u1 = 0, // Ex only
+    LOADER_WORKER: bool = false, // Ex only, since THRESHOLD
+    SKIP_LOADER_INIT: bool = false, // Ex only, since REDSTONE2
+    BYPASS_PROCESS_FREEZE: bool = false, // Ex only, since 19H1
+    _reserved2: u25 = 0,
+};
+
+pub extern "ntdll" fn NtCreateThreadEx(
+    ThreadHandle: *HANDLE,
+    DesiredAccess: ACCESS_MASK,
+    ObjectAttributes: ?*OBJECT_ATTRIBUTES,
+    ProcessHandle: HANDLE,
+    StartRoutine: *const USER_THREAD_START_ROUTINE,
+    Argument: ?PVOID,
+    CreateFlags: THREAD_CREATE_FLAGS,
+    ZeroBits: SIZE_T,
+    StackSize: SIZE_T,
+    MaximumStackSize: SIZE_T,
+    AttributeList: ?*PS_ATTRIBUTE_LIST,
+) callconv(.winapi) NTSTATUS;
+
 pub extern "ntdll" fn RtlNtStatusToDosError(
     Status: NTSTATUS,
-) callconv(.winapi) ULONG;
+) callconv(.winapi) Win32Error;
 
 pub extern "ntdll" fn RtlSetLastWin32Error(err: Win32Error) callconv(.winapi) void;
 

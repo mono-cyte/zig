@@ -309,10 +309,17 @@ pub extern "kernel32" fn CreateToolhelp32Snapshot(
 
 // Threading
 
-// TODO: Already a wrapper for this, see `windows.GetCurrentThreadId`.
-pub extern "kernel32" fn GetCurrentThreadId() callconv(.winapi) DWORD;
+pub const CreateThreadFlags = packed struct(u32) {
+    _reserved: u2 = 0,
+    CREATE_SUSPEND: bool = false,
+    _reserved2: u13 = 0,
+    STACK_SIZE_PARAM_IS_A_RESERVATION: bool = false,
+    _reserved3: u15 = 0,
+};
 
-pub extern "kernel32" fn CreateRemoteThreadEx(hProcess: HANDLE, lpThreadAttributes: ?*SECURITY_ATTRIBUTES, dwStackSize: SIZE_T, lpStartAddress: LPTHREAD_START_ROUTINE, lpParameter: ?LPVOID, dwCreationFlags: DWORD, lpAttributeList: ?*PROC_THREAD_ATTRIBUTE_LIST, lpThreadId: ?*DWORD) callconv(.winapi) ?HANDLE;
+// TODO: Already a wrapper for this, see `windows.GetCurrentThreadId`.
+const GetCurrentThread = windows.GetCurrentThread;
+const GetCurrentThreadId = windows.GetCurrentThreadId;
 
 pub extern "kernel32" fn CreateRemoteThread(
     hProcess: HANDLE,
@@ -320,19 +327,20 @@ pub extern "kernel32" fn CreateRemoteThread(
     dwStackSize: SIZE_T,
     lpStartAddress: LPTHREAD_START_ROUTINE,
     lpParameter: LPVOID,
-    dwCreationFlags: DWORD,
+    dwCreationFlags: CreateThreadFlags,
     lpThreadId: ?*DWORD,
 ) callconv(.winapi) ?HANDLE;
 
-// TODO: CreateRemoteThread with hProcess=NtCurrentProcess().
-pub extern "kernel32" fn CreateThread(
+pub fn CreateThread(
     lpThreadAttributes: ?*SECURITY_ATTRIBUTES,
     dwStackSize: SIZE_T,
     lpStartAddress: LPTHREAD_START_ROUTINE,
     lpParameter: ?LPVOID,
-    dwCreationFlags: DWORD,
+    dwCreationFlags: CreateThreadFlags,
     lpThreadId: ?*DWORD,
-) callconv(.winapi) ?HANDLE;
+) ?HANDLE {
+    return CreateRemoteThread(GetCurrentProcess(), lpThreadAttributes, dwStackSize, lpStartAddress, lpParameter, dwCreationFlags, lpThreadId);
+}
 
 // Locks, critical sections, initializers
 
@@ -637,96 +645,3 @@ pub fn VirtualFree(lpAddress: LPVOID, Size: SIZE_T, FreeType: MEM.FREE) VirtualF
 }
 
 pub const unexpectedStatus = windows.unexpectedStatus;
-
-pub const InitializeProcThreadAttributeListError = error{
-    InvalidFlags,
-    TooManyAttributes,
-    InsufficientBuffer,
-};
-
-// TODO: PROC_THREAD_ATTRIBUTE_LIST is undocumented
-pub fn InitializeProcThreadAttributeList(
-    lpAttributeList: ?*PROC_THREAD_ATTRIBUTE_LIST,
-    AttributeCount: u32,
-    Flags: u32,
-    lpSize: *usize,
-) InitializeProcThreadAttributeListError!void {
-    if (Flags != 0) return error.InvalidFlags; //INVALID_PARAMETER_3
-    if (AttributeCount > 31) return error.TooManyAttributes; //INVALID_PARAMETER_2
-
-    const param_size = lpSize.*;
-    const entry_size = @sizeOf(PROC_THREAD_ATTRIBUTE_LIST.Entry);
-    const header_size = @sizeOf(PROC_THREAD_ATTRIBUTE_LIST);
-
-    const required_size = header_size + @as(usize, AttributeCount) * entry_size;
-
-    lpSize.* = required_size;
-
-    if (lpAttributeList) |list| {
-        if (param_size < required_size) return error.InsufficientBuffer;
-        list.* = .{
-            .Flags = 0,
-            .Size = AttributeCount,
-            .Count = 0,
-            .Reserved = 0,
-            .Unknown = null,
-            .Entries = .{},
-        };
-    }
-}
-
-const UpdateProcThreadAttributeError = error{
-    InvalidParameter,
-    InsufficientCapacity,
-    AttributeAlreadySet,
-    Unexpected,
-};
-
-pub fn UpdateProcThreadAttribute(
-    lpAttributeList: *PROC_THREAD_ATTRIBUTE_LIST,
-    Flags: DWORD,
-    Attribute: PROC_THREAD_ATTRIBUTE,
-    lpValue: LPVOID,
-    Size: SIZE_T,
-    lpPreviousValue: ?LPVOID,
-    lpReturnSize: ?*SIZE_T,
-) UpdateProcThreadAttributeError!void {
-    // Reserved parameters must be zero / null
-    if ((Flags & 0xFFFFFFFE) != 0) return error.InvalidParameter;
-    if (lpReturnSize != null) return error.InvalidParameter;
-
-    if (lpAttributeList.Count >= lpAttributeList.Size) {
-        return error.InsufficientCapacity;
-    }
-
-    const bits = Attribute.asBits();
-
-    const flag = @as(u32, 1) << @as(u5, @intCast(bits.id & 0x1F));
-
-    if ((lpAttributeList.Flags & flag) != 0) {
-        return error.AttributeAlreadySet; // NTSTATUS: OBJECT_NAME_EXISTS
-    }
-
-    if (bits.additive and lpPreviousValue != null) {
-        return error.InvalidParameter;
-    }
-
-    switch (bits.id) {
-        .ParentProcess => if (Size != @sizeOf(HANDLE)) return error.InvalidParameter,
-        .HandleList => {
-            if (Size == 0 or (Size % @sizeOf(HANDLE) != 0)) return error.InvalidParameter;
-        },
-        else => {
-            if (Size == 0) return error.InvalidParameter;
-        },
-    }
-
-    const entry = lpAttributeList.getEntry(lpAttributeList.Count);
-
-    entry.lpValue = lpValue;
-    entry.Attribute = Attribute;
-    entry.Size = Size;
-
-    lpAttributeList.Count += 1;
-    lpAttributeList.Flags |= flag;
-}
