@@ -4891,7 +4891,10 @@ pub const FILE_BEGIN = 0;
 pub const FILE_CURRENT = 1;
 pub const FILE_END = 2;
 
-pub const PTHREAD_START_ROUTINE = *const fn (LPVOID) callconv(.winapi) DWORD;
+pub const USER_THREAD_START_ROUTINE = fn (PVOID) callconv(.winapi) NTSTATUS;
+pub const PUSER_THREAD_START_ROUTINE = *const USER_THREAD_START_ROUTINE;
+pub const THREAD_START_ROUTINE = USER_THREAD_START_ROUTINE;
+pub const PTHREAD_START_ROUTINE = *const THREAD_START_ROUTINE;
 pub const LPTHREAD_START_ROUTINE = PTHREAD_START_ROUTINE;
 
 pub const WIN32_FIND_DATAW = extern struct {
@@ -6876,9 +6879,24 @@ pub const PROC_THREAD_ATTRIBUTE = enum(usize) {
         input: bool,
         additive: bool,
         _reserved: u13,
+
+        pub fn init(id: Num, thread: bool, input: bool, additive: bool) Bits {
+            return .{
+                .number = @intFromEnum(id),
+                .thread = thread,
+                .input = input,
+                .additive = additive,
+                ._reserved = 0,
+            };
+        }
+
+        pub fn asValue(self: Bits) usize {
+            const v: u32 = @bitCast(self);
+            return @intCast(v);
+        }
     };
 
-    pub const Id = enum(u16) {
+    pub const Num = enum(u16) {
         ParentProcess = 0,
         HandleList = 2,
         GroupAffinity = 3,
@@ -6903,42 +6921,34 @@ pub const PROC_THREAD_ATTRIBUTE = enum(usize) {
         SveVectorLength = 30,
     };
 
-    fn ProcThreadAttributeValue(id: Id, thread: bool, input: bool, additive: bool) usize {
-        const bits: u32 = @bitCast(Bits{
-            .number = @intFromEnum(id),
-            .thread = thread,
-            .input = input,
-            .additive = additive,
-            ._reserved = 0,
-        });
-
-        return @intCast(bits);
+    fn value(id: Num, thread: bool, input: bool, additive: bool) usize {
+        return Bits.init(id, thread, input, additive).asValue();
     }
 
     // Windows 7 and later
-    PARENT_PROCESS = ProcThreadAttributeValue(.ParentProcess, false, true, false),
-    HANDLE_LIST = ProcThreadAttributeValue(.HandleList, false, true, false),
-    GROUP_AFFINITY = ProcThreadAttributeValue(.GroupAffinity, true, true, false),
-    PREFERRED_NODE = ProcThreadAttributeValue(.PreferredNode, false, true, false),
-    IDEAL_PROCESSOR = ProcThreadAttributeValue(.IdealProcessor, true, true, false),
-    UMS_THREAD = ProcThreadAttributeValue(.UmsThread, true, true, false),
-    MITIGATION_POLICY = ProcThreadAttributeValue(.MitigationPolicy, false, true, false),
+    PARENT_PROCESS = value(.ParentProcess, false, true, false),
+    HANDLE_LIST = value(.HandleList, false, true, false),
+    GROUP_AFFINITY = value(.GroupAffinity, true, true, false),
+    PREFERRED_NODE = value(.PreferredNode, false, true, false),
+    IDEAL_PROCESSOR = value(.IdealProcessor, true, true, false),
+    UMS_THREAD = value(.UmsThread, true, true, false),
+    MITIGATION_POLICY = value(.MitigationPolicy, false, true, false),
     // Windows 8 and later
-    SECURITY_CAPABILITIES = ProcThreadAttributeValue(.SecurityCapabilities, false, true, false),
-    PROTECTION_LEVEL = ProcThreadAttributeValue(.ProtectionLevel, false, true, false),
+    SECURITY_CAPABILITIES = value(.SecurityCapabilities, false, true, false),
+    PROTECTION_LEVEL = value(.ProtectionLevel, false, true, false),
     // Windows 10 and later
-    PSEUDOCONSOLE = ProcThreadAttributeValue(.PseudoConsole, false, true, false), // 1809(RS5) and later
-    MACHINE_TYPE = ProcThreadAttributeValue(.MachineType, false, true, false), // 20H1(MN) and later
-    ENABLE_OPTIONAL_XSTATE_FEATURES = ProcThreadAttributeValue(.EnableOptionalXStateFeatures, true, true, false), // 21H1(FE) and later
+    PSEUDOCONSOLE = value(.PseudoConsole, false, true, false), // 1809(RS5) and later
+    MACHINE_TYPE = value(.MachineType, false, true, false), // 20H1(MN) and later
+    ENABLE_OPTIONAL_XSTATE_FEATURES = value(.EnableOptionalXStateFeatures, true, true, false), // 21H1(FE) and later
     // Windows 11 and later
-    SVE_VECTOR_LENGTH = ProcThreadAttributeValue(.SveVectorLength, false, true, false), // 24H2(GE) and later
+    SVE_VECTOR_LENGTH = value(.SveVectorLength, false, true, false), // 24H2(GE) and later
 
     const Self = @This();
     pub fn asBits(self: Self) Bits {
         return @bitCast(@as(u32, @truncate(@intFromEnum(self))));
     }
 
-    pub fn getId(self: Self) Id {
+    pub fn getId(self: Self) Num {
         const id = self.asBits().number;
         return @enumFromInt(id);
     }
@@ -6960,7 +6970,7 @@ pub const PROC_THREAD_ATTRIBUTE_LIST = extern struct {
         lpValue: LPVOID,
     };
 
-    pub fn getEntry(self: @This(), i: u32) ?*Entry {
+    pub fn getEntry(self: *List, i: u32) ?*Entry {
         if (i >= self.Count) {
             return null;
         } else {
@@ -6981,11 +6991,13 @@ pub const PROC_THREAD_ATTRIBUTE_LIST = extern struct {
         return list_size + attr_cnt * entry_size;
     }
 
-    pub fn buffer(attr_cnt: u32, flags: u32) type {
+    pub fn Buffer(attr_cnt: u32, flags: u32) type {
         return extern struct {
             list: List,
             entries: [attr_cnt]Entry,
-            pub fn init() InitError!@This() {
+
+            const Self = @This();
+            pub fn init() InitError!Self {
                 if (flags != 0) return error.InvalidFlags; //INVALID_PARAMETER_3
                 if (attr_cnt > 31) return error.TooManyAttributes; //INVALID_PARAMETER_2
                 return .{ .list = .{
@@ -6996,6 +7008,9 @@ pub const PROC_THREAD_ATTRIBUTE_LIST = extern struct {
                     .Unknown = null,
                     .Entries = .{},
                 }, .entries = undefined };
+            }
+            pub fn asList(self: *Self) *List {
+                return @ptrCast(self);
             }
         };
     }

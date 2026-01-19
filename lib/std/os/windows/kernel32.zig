@@ -315,18 +315,80 @@ pub const CreateThreadFlags = packed struct(u32) {
     _reserved2: u13 = 0,
     STACK_SIZE_PARAM_IS_A_RESERVATION: bool = false,
     _reserved3: u15 = 0,
+
+    const Self = @This();
+    const THREAD_CREATE_FLAGS = ntdll.THREAD_CREATE_FLAGS;
 };
 
 // TODO: Already a wrapper for this, see `windows.GetCurrentThreadId`.
 const GetCurrentThread = windows.GetCurrentThread;
 const GetCurrentThreadId = windows.GetCurrentThreadId;
+const OBJECT_ATTRIBUTES = windows.OBJECT_ATTRIBUTES;
+const THREAD_CREATE_FLAGS = ntdll.THREAD_CREATE_FLAGS;
+const PS_ATTRIBUTE_LIST = ntdll.PS_ATTRIBUTE_LIST;
+const CLIENT_ID = windows.CLIENT_ID;
+
+const CreateThreadError = error{Unexpected};
+
+pub fn CreateRemoteThreadEx(
+    ProcessHandle: HANDLE,
+    lpThreadAttributes: ?*SECURITY_ATTRIBUTES,
+    dwStackSize: SIZE_T,
+    lpStartAddress: LPTHREAD_START_ROUTINE,
+    lpParameter: ?LPVOID,
+    CreationFlags: CreateThreadFlags,
+    lpAttributeList: ?*PROC_THREAD_ATTRIBUTE_LIST,
+    lpThreadId: ?*DWORD,
+) CreateThreadError!HANDLE {
+    var thread_h: HANDLE = undefined;
+
+    const access = ACCESS_MASK.Specific.Thread.ALL_ACCESS;
+
+    var attrs: OBJECT_ATTRIBUTES = .{
+        .Length = @sizeOf(OBJECT_ATTRIBUTES),
+        .RootDirectory = null,
+        .Attributes = .{},
+        .ObjectName = null,
+        .SecurityDescriptor = null,
+        .SecurityQualityOfService = null,
+    };
+
+    if (lpThreadAttributes) |a| {
+        attrs.Attributes.INHERIT = a.bInheritHandle != 0;
+    }
+
+    const flags: THREAD_CREATE_FLAGS = .{};
+    if (CreationFlags.STACK_SIZE_PARAM_IS_A_RESERVATION) {}
+
+    var cid: CLIENT_ID = undefined;
+
+    var list = PS_ATTRIBUTE_LIST.Buffer(1).init();
+    list.entries[0].Attribute = .CLIENT_ID;
+    list.entries[0].Size = @sizeOf(CLIENT_ID);
+    list.entries[0].Data.ptr = @ptrCast(&cid);
+
+    if (lpAttributeList) |l| {
+        _ = l;
+    }
+
+    const rc = std.os.windows.ntdll.NtCreateThreadEx(&thread_h, access, &attrs, ProcessHandle, @ptrCast(lpStartAddress), lpParameter, flags, 0, dwStackSize, 0, list.asList());
+    switch (rc) {
+        .SUCCESS => {
+            if (lpThreadId) |tid| {
+                tid.* = @truncate(@intFromPtr(cid.UniqueThread));
+            }
+            return thread_h;
+        },
+        else => return unexpectedStatus(rc),
+    }
+}
 
 pub extern "kernel32" fn CreateRemoteThread(
     hProcess: HANDLE,
     lpThreadAttributes: ?*SECURITY_ATTRIBUTES,
     dwStackSize: SIZE_T,
     lpStartAddress: LPTHREAD_START_ROUTINE,
-    lpParameter: LPVOID,
+    lpParameter: ?LPVOID,
     dwCreationFlags: CreateThreadFlags,
     lpThreadId: ?*DWORD,
 ) callconv(.winapi) ?HANDLE;
@@ -508,13 +570,15 @@ pub extern "kernel32" fn FormatMessageW(
     Arguments: ?*va_list,
 ) callconv(.winapi) DWORD;
 
-// TODO: Getter for teb().LastErrorValue.
-pub extern "kernel32" fn GetLastError() callconv(.winapi) Win32Error;
+pub fn GetLastError() Win32Error {
+    return windows.teb().LastErrorValue;
+}
 
-// TODO: Wrapper around RtlSetLastWin32Error.
-pub extern "kernel32" fn SetLastError(
+pub fn SetLastError(
     dwErrCode: Win32Error,
-) callconv(.winapi) void;
+) void {
+    ntdll.RtlSetLastWin32Error(dwErrCode);
+}
 
 // Everything Else
 
@@ -554,7 +618,7 @@ pub fn VirtualAllocEx(
     var region_size: SIZE_T = RegionSize;
     const alloc_type = AllocationType;
 
-    const status = ntdll.NtAllocateVirtualMemory(
+    const rc = ntdll.NtAllocateVirtualMemory(
         ProcessHandle,
         @ptrCast(&base_addr),
         0,
@@ -563,16 +627,13 @@ pub fn VirtualAllocEx(
         Protect,
     );
 
-    if (@intFromEnum(status) < 0) {
-        switch (status) {
-            .ACCESS_DENIED => return error.AccessDenied,
-            .INVALID_HANDLE => return error.InvalidHandle,
-            .INVALID_PARAMETER => return error.InvalidParameter,
-            else => return unexpectedStatus(status),
-        }
+    switch (rc) {
+        .SUCCESS => return base_addr orelse error.Unexpected,
+        .ACCESS_DENIED => return error.AccessDenied,
+        .INVALID_HANDLE => return error.InvalidHandle,
+        .INVALID_PARAMETER => return error.InvalidParameter,
+        else => return unexpectedStatus(rc),
     }
-
-    return base_addr orelse error.Unexpected;
 }
 
 const VirtualAllocError = VirtualAllocExError;
@@ -607,19 +668,19 @@ pub fn VirtualFreeEx(ProcessHandle: HANDLE, lpAddress: LPVOID, Size: SIZE_T, Fre
     var addr = lpAddress;
     var size = Size;
 
-    var status = ntdll.NtFreeVirtualMemory(
+    var rc = ntdll.NtFreeVirtualMemory(
         ProcessHandle,
         &addr,
         &size,
         FreeType,
     );
 
-    if (status == .INVALID_PAGE_PROTECTION) {
+    if (rc == .INVALID_PAGE_PROTECTION) {
         if (ProcessHandle == GetCurrentProcess()) {
             if (ntdll.RtlFlushSecureMemoryCache(lpAddress, Size) == 0) {
                 return error.Unexpected;
             }
-            status = ntdll.NtFreeVirtualMemory(
+            rc = ntdll.NtFreeVirtualMemory(
                 ProcessHandle,
                 &addr,
                 &size,
@@ -628,13 +689,12 @@ pub fn VirtualFreeEx(ProcessHandle: HANDLE, lpAddress: LPVOID, Size: SIZE_T, Fre
         }
     }
 
-    if (@intFromEnum(status) < 0) {
-        switch (status) {
-            .ACCESS_DENIED => return error.AccessDenied,
-            .INVALID_HANDLE => return error.InvalidHandle,
-            .INVALID_PARAMETER => return error.InvalidParameter,
-            else => return unexpectedStatus(status),
-        }
+    switch (rc) {
+        .SUCCESS => return,
+        .ACCESS_DENIED => return error.AccessDenied,
+        .INVALID_HANDLE => return error.InvalidHandle,
+        .INVALID_PARAMETER => return error.InvalidParameter,
+        else => return unexpectedStatus(rc),
     }
 }
 

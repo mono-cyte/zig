@@ -700,9 +700,9 @@ const WindowsThreadImpl = struct {
         instance.thread.thread_handle = windows.kernel32.CreateThread(
             null,
             stack_size,
-            Instance.entryFn,
+            @ptrCast(&Instance.entryFn),
             instance,
-            0,
+            .{},
             null,
         ) orelse {
             const errno = windows.GetLastError();
